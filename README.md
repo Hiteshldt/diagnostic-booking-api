@@ -46,6 +46,40 @@ flowchart LR
     R --> W --> PG
 ```
 
+### Request flow
+
+The main journey, from login to a confirmed booking, including a repeated webhook:
+
+```mermaid
+sequenceDiagram
+    actor U as Patient
+    participant A as API
+    participant D as PostgreSQL
+    participant P as Payment provider
+
+    U->>A: POST /auth/login/
+    A-->>U: JWT token
+    U->>A: POST /bookings/
+    A->>D: save booking as PENDING
+    A-->>U: 201 booking
+    U->>A: POST /payments/
+    A->>D: lock booking, create payment
+    alt payment succeeds
+        A->>D: payment SUCCESS, booking CONFIRMED
+    else payment fails
+        A->>D: payment FAILED, booking FAILED
+    else left pending
+        Note over A,D: payment stays PENDING for the webhook
+    end
+    A-->>U: 201 payment
+    P->>A: POST /payments/webhook/ with signature and event_id
+    A->>D: store event, event_id is unique
+    A->>D: settle the payment once
+    A-->>P: 200 processed
+    P->>A: same event again
+    A-->>P: 200 duplicate, nothing changed
+```
+
 | Piece | What it does here |
 |---|---|
 | **Django + DRF** | The web framework: routing, validation (serializers), auth, ORM |

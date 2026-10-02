@@ -1,0 +1,55 @@
+# One command brings up the whole stack:  docker compose up --build
+# The values below are for local development only.
+
+x-app: &app
+  build: .
+  environment:
+    DEBUG: "false"
+    SECRET_KEY: local-compose-secret-key-change-me-for-any-real-deployment
+    DATABASE_URL: postgres://eve:eve@db:5432/eve
+    REDIS_URL: redis://redis:6379/0
+    WEBHOOK_SECRET: dev-webhook-secret
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: eve
+      POSTGRES_USER: eve
+      POSTGRES_PASSWORD: eve
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eve -d eve"]
+      interval: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 10
+
+  # The API. Applies migrations and loads demo data before starting.
+  web:
+    <<: *app
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py seed_demo &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3"
+    ports:
+      - "8000:8000"
+
+  # Background jobs: webhook retries, plus the scheduled clean-up tasks (-B).
+  worker:
+    <<: *app
+    command: celery -A config worker -B --loglevel=info --schedule=/tmp/celerybeat-schedule
+
+volumes:
+  pgdata:
